@@ -69,10 +69,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: tview-windows-x86_64
             archive: tview-windows-x86_64.zip
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: tview-macos-x86_64
-            archive: tview-macos-x86_64.tar.gz
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: tview-macos-aarch64
