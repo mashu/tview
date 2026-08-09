@@ -9,11 +9,13 @@ Fast viewer for plotting and comparing CSV/TSV metric logs — native desktop UI
 
 ## Install
 
-Download a binary from [Releases](https://github.com/mashu/tview/releases), or build from source:
+Download a binary for your OS from [Releases](https://github.com/mashu/tview/releases), or build from source:
 
 ```bash
 cargo install --path .
 ```
+
+Tagged releases (`v*`) build Linux, Windows, and macOS ARM binaries and publish them automatically.
 
 ## Usage
 
