@@ -109,6 +109,10 @@ impl DataFile {
     /// Re-read from disk if size or mtime changed. Preserves visibility and
     /// column selection (matched by column name).
     pub fn refresh_from_disk(&mut self) -> Result<RefreshOutcome, String> {
+        // Uploaded / in-memory buffers are not watchable.
+        if !self.path.exists() {
+            return Ok(RefreshOutcome::Unchanged);
+        }
         let meta =
             std::fs::metadata(&self.path).map_err(|e| format!("{}: {}", self.path.display(), e))?;
         let len = meta.len();

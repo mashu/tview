@@ -1,6 +1,8 @@
-use crate::data::DataFile;
+use crate::backend::{ColumnView, FileView, PlotOptions};
+use crate::desktop::theme::{
+    self, ACCENT, BG_DEEP, BG_ELEVATED, BORDER, TEXT, TEXT_DIM, TEXT_MUTED,
+};
 use crate::series::{Series, palette};
-use crate::theme::{self, ACCENT, BG_DEEP, BG_ELEVATED, BORDER, TEXT, TEXT_DIM, TEXT_MUTED};
 use egui::{Color32, ComboBox, Frame, Margin, RichText, Sense, Stroke, Ui};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
@@ -17,18 +19,19 @@ pub struct ControlEvents {
     pub add_files: bool,
     pub export: bool,
     pub remove: Option<usize>,
+    pub set_visible: Option<(usize, bool)>,
+    pub set_selected: Option<(usize, usize, bool)>,
+    pub options_changed: bool,
+    pub live_changed: bool,
 }
 
-/// Mutable display options shared by the sidebar controls.
+/// Mutable display options edited in the sidebar (copied to backend on change).
 pub struct DisplaySettings<'a> {
-    pub x_col: &'a mut String,
-    pub log_y: &'a mut bool,
-    pub smoothing: &'a mut f32,
-    pub line_w: &'a mut f32,
+    pub options: &'a mut PlotOptions,
     pub live_reload: &'a mut bool,
 }
 
-pub fn draw_toolbar(ui: &mut Ui) -> ControlEvents {
+pub fn draw_toolbar(ui: &mut Ui, busy: bool) -> ControlEvents {
     let mut ev = ControlEvents::default();
     ui.horizontal(|ui| {
         ui.add_space(2.0);
@@ -38,6 +41,11 @@ pub fn draw_toolbar(ui: &mut Ui) -> ControlEvents {
                 ui.label(RichText::new("tview").size(20.0).strong().color(ACCENT));
                 ui.add_space(6.0);
                 ui.label(RichText::new("Plot & compare tabular metrics").color(TEXT_MUTED));
+                if busy {
+                    ui.add_space(8.0);
+                    ui.spinner();
+                    ui.label(RichText::new("working…").small().color(TEXT_DIM));
+                }
             });
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -139,16 +147,13 @@ pub fn draw_empty_state(ui: &mut Ui) -> bool {
 
 pub fn draw_controls(
     ui: &mut Ui,
-    files: &mut [DataFile],
+    files: &[FileView],
     settings: DisplaySettings<'_>,
     x_opts: &[String],
 ) -> ControlEvents {
     let mut ev = ControlEvents::default();
     let DisplaySettings {
-        x_col,
-        log_y,
-        smoothing,
-        line_w,
+        options,
         live_reload,
     } = settings;
 
@@ -162,31 +167,54 @@ pub fn draw_controls(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("X axis").color(TEXT_MUTED));
+                let before = options.x_col.clone();
                 ComboBox::from_id_source("x_axis")
-                    .selected_text(x_col.clone())
+                    .selected_text(options.x_col.clone())
                     .width(ui.available_width().max(120.0))
                     .show_ui(ui, |ui| {
                         for o in x_opts {
-                            ui.selectable_value(x_col, o.clone(), o);
+                            ui.selectable_value(&mut options.x_col, o.clone(), o);
                         }
                     });
+                if options.x_col != before {
+                    ev.options_changed = true;
+                }
             });
             ui.add_space(4.0);
-            ui.checkbox(log_y, "Log-scale Y");
-            ui.checkbox(live_reload, "Live reload (watch files)")
-                .on_hover_text(
-                    "Poll open files every half second and re-plot when new rows are appended.",
-                );
-            ui.add(
-                egui::Slider::new(smoothing, 0.0..=0.95)
-                    .text("Smoothing")
-                    .show_value(true),
-            );
-            ui.add(
-                egui::Slider::new(line_w, 0.5..=4.0)
-                    .text("Line width")
-                    .show_value(true),
-            );
+            if ui.checkbox(&mut options.log_y, "Log-scale Y").changed() {
+                ev.options_changed = true;
+            }
+            let mut live = *live_reload;
+            if ui
+                .checkbox(&mut live, "Live reload (watch files)")
+                .on_hover_text("Backend polls open files every half second and re-plots on append.")
+                .changed()
+            {
+                *live_reload = live;
+                ev.live_changed = true;
+            }
+            let mut smoothing = options.smoothing as f32;
+            if ui
+                .add(
+                    egui::Slider::new(&mut smoothing, 0.0..=0.95)
+                        .text("Smoothing")
+                        .show_value(true),
+                )
+                .changed()
+            {
+                options.smoothing = f64::from(smoothing);
+                ev.options_changed = true;
+            }
+            if ui
+                .add(
+                    egui::Slider::new(&mut options.line_w, 0.5..=4.0)
+                        .text("Line width")
+                        .show_value(true),
+                )
+                .changed()
+            {
+                ev.options_changed = true;
+            }
         });
 
     ui.add_space(8.0);
@@ -213,10 +241,7 @@ pub fn draw_controls(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut color_idx = 0usize;
-            for (fi, file) in files.iter_mut().enumerate() {
-                let header = file.name.clone();
-                let nrows = file.nrows;
-                let path_tip = file.path.display().to_string();
+            for (fi, file) in files.iter().enumerate() {
                 let file_visible = file.visible;
 
                 Frame::none()
@@ -230,7 +255,10 @@ pub fn draw_controls(
                     .inner_margin(Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.checkbox(&mut file.visible, "");
+                            let mut visible = file.visible;
+                            if ui.checkbox(&mut visible, "").changed() {
+                                ev.set_visible = Some((fi, visible));
+                            }
                             let rest = ui.available_width();
                             ui.allocate_ui_with_layout(
                                 egui::vec2(rest, ui.spacing().interact_size.y),
@@ -241,15 +269,17 @@ pub fn draw_controls(
                                     }
                                     ui.add_space(8.0);
                                     ui.label(
-                                        RichText::new(format!("{nrows} rows"))
+                                        RichText::new(format!("{} rows", file.nrows))
                                             .small()
                                             .color(TEXT_DIM),
                                     );
                                     ui.with_layout(
                                         egui::Layout::left_to_right(egui::Align::Center),
                                         |ui| {
-                                            ui.label(RichText::new(&header).strong().color(TEXT))
-                                                .on_hover_text(&path_tip);
+                                            ui.label(
+                                                RichText::new(&file.name).strong().color(TEXT),
+                                            )
+                                            .on_hover_text(&file.path);
                                         },
                                     );
                                 },
@@ -257,29 +287,20 @@ pub fn draw_controls(
                         });
 
                         ui.add_space(4.0);
-                        for ci in 0..file.columns.len() {
-                            if !file.columns[ci].numeric {
+                        for (ci, col) in file.columns.iter().enumerate() {
+                            if !col.numeric {
                                 continue;
                             }
-                            let name = file.columns[ci].name.clone();
-                            let selected = file.selected[ci];
-                            let is_x = name == *x_col;
-                            let fill = if selected && file_visible && !is_x {
-                                let c = color32(palette(color_idx));
-                                color_idx += 1;
-                                c
-                            } else if selected {
-                                TEXT_MUTED
-                            } else {
-                                TEXT_DIM
-                            };
-
-                            ui.horizontal(|ui| {
-                                let (rect, _) =
-                                    ui.allocate_exact_size(egui::vec2(8.0, 8.0), Sense::hover());
-                                ui.painter().circle_filled(rect.center(), 4.0, fill);
-                                ui.checkbox(&mut file.selected[ci], name);
-                            });
+                            draw_column_row(
+                                ui,
+                                col,
+                                &options.x_col,
+                                file_visible,
+                                &mut color_idx,
+                                |selected| {
+                                    ev.set_selected = Some((fi, ci, selected));
+                                },
+                            );
                         }
                     });
                 ui.add_space(6.0);
@@ -287,6 +308,35 @@ pub fn draw_controls(
         });
 
     ev
+}
+
+fn draw_column_row(
+    ui: &mut Ui,
+    col: &ColumnView,
+    x_col: &str,
+    file_visible: bool,
+    color_idx: &mut usize,
+    on_toggle: impl FnOnce(bool),
+) {
+    let is_x = col.name == x_col;
+    let fill = if col.selected && file_visible && !is_x {
+        let c = color32(palette(*color_idx));
+        *color_idx += 1;
+        c
+    } else if col.selected {
+        TEXT_MUTED
+    } else {
+        TEXT_DIM
+    };
+
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 4.0, fill);
+        let mut selected = col.selected;
+        if ui.checkbox(&mut selected, &col.name).changed() {
+            on_toggle(selected);
+        }
+    });
 }
 
 pub fn draw_status_bar(ui: &mut Ui, status: &str, n_series: usize, n_files: usize, live: bool) {

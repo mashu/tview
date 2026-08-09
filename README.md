@@ -5,13 +5,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://github.com/mashu/tview/actions/workflows/release.yml/badge.svg)](https://github.com/mashu/tview/actions/workflows/release.yml)
 
-Fast desktop viewer for plotting and comparing CSV/TSV metric logs.
-
-Open one or more training or experiment logs, pick columns, and overlay series with optional smoothing, log-scale Y, and PNG export.
+Fast viewer for plotting and comparing CSV/TSV metric logs — native desktop UI or headless web server, sharing one threaded backend.
 
 ## Install
 
-Download a binary for your OS from [Releases](https://github.com/mashu/tview/releases), or build from source:
+Download a binary from [Releases](https://github.com/mashu/tview/releases), or build from source:
 
 ```bash
 cargo install --path .
@@ -19,15 +17,31 @@ cargo install --path .
 
 ## Usage
 
+### Desktop
+
 ```bash
 tview
 tview run_a.csv run_b.tsv
 ```
 
-- **Add files** from the toolbar, or drag & drop CSV/TSV onto the window
-- Choose an **X axis** (step/epoch/row index) and tick columns to plot
-- Adjust **smoothing** / **line width**, toggle **log Y**, then **Export PNG**
-- Keep **Live reload** on to watch open files and re-plot as new rows are appended
+Loading, live file watching, and PNG export run on a background worker so the UI stays responsive.
+
+### Web (headless)
+
+No display required — useful on remote machines:
+
+```bash
+tview serve --bind 0.0.0.0:8080
+tview serve --bind 127.0.0.1:8080 ./metrics.csv
+```
+
+Open `http://<host>:8080`. Upload files, load server paths, toggle series, and export PNG. Live reload polls open disk files the same way as desktop.
+
+## Architecture
+
+- **backend** — owns data; load / watch / export on a worker thread; publishes snapshots
+- **desktop** — egui frontend (commands in, snapshot out)
+- **web** — axum HTTP API + embedded UI (same backend)
 
 ## Develop
 
@@ -35,6 +49,7 @@ tview run_a.csv run_b.tsv
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo run --release -- fixtures/example_run_a.csv
+cargo run --release -- serve --bind 127.0.0.1:8080 fixtures/example_run_a.csv
 ```
 
 ## License

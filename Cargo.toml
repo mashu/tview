@@ -2,7 +2,7 @@
 name = "tview"
 version = "0.1.0"
 edition = "2024"
-description = "A fast, modern desktop viewer for plotting and comparing CSV/TSV metric logs"
+description = "A fast, modern viewer for plotting and comparing CSV/TSV metric logs (desktop + headless web)"
 license = "MIT"
 repository = "https://github.com/mashu/tview"
 readme = "README.md"
@@ -10,12 +10,23 @@ keywords = ["csv", "tsv", "plot", "metrics", "viewer"]
 categories = ["visualization", "command-line-utilities"]
 
 [dependencies]
+csv = "1.3"
+plotters = "0.3"
+image = { version = "0.24", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+# Desktop UI
 eframe = "0.27"
 egui = "0.27"
 egui_plot = "0.27"
 rfd = "0.14"
-csv = "1.3"
-plotters = "0.3"
+
+# Web server
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tower-http = { version = "0.6", features = ["cors"] }
 
 [profile.release]
 lto = true
