@@ -45,43 +45,43 @@ pub fn apply(ctx: &egui::Context) {
     };
     visuals.window_rounding = Rounding::same(10.0);
     visuals.menu_rounding = Rounding::same(8.0);
-    visuals.window_stroke = Stroke::new(1.0, BORDER);
+    visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
     visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(94, 186, 167, 90);
-    visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+    visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
     // Non-interactive widgets (labels, frames).
     visuals.widgets.noninteractive.bg_fill = BG_PANEL;
     visuals.widgets.noninteractive.weak_bg_fill = BG_ELEVATED;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER_SOFT);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_MUTED);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER_SOFT);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT_MUTED);
     visuals.widgets.noninteractive.rounding = Rounding::same(6.0);
 
     // Idle interactive.
     visuals.widgets.inactive.bg_fill = BG_ELEVATED;
     visuals.widgets.inactive.weak_bg_fill = BG_ELEVATED;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
     visuals.widgets.inactive.rounding = Rounding::same(7.0);
 
     // Hovered.
     visuals.widgets.hovered.bg_fill = BG_HOVER;
     visuals.widgets.hovered.weak_bg_fill = BG_HOVER;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, TEXT);
     visuals.widgets.hovered.rounding = Rounding::same(7.0);
 
     // Active / pressed.
     visuals.widgets.active.bg_fill = Color32::from_rgb(50, 58, 72);
     visuals.widgets.active.weak_bg_fill = Color32::from_rgb(50, 58, 72);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.5, ACCENT);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.5_f32, ACCENT);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, TEXT);
     visuals.widgets.active.rounding = Rounding::same(7.0);
 
     // Open menus / comboboxes.
     visuals.widgets.open.bg_fill = BG_HOVER;
     visuals.widgets.open.weak_bg_fill = BG_HOVER;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, ACCENT);
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT);
     visuals.widgets.open.rounding = Rounding::same(7.0);
 
     visuals.slider_trailing_fill = true;
@@ -153,7 +153,7 @@ pub fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).color(TEXT))
             .fill(BG_ELEVATED)
-            .stroke(Stroke::new(1.0, BORDER))
+            .stroke(Stroke::new(1.0_f32, BORDER))
             .rounding(Rounding::same(8.0))
             .min_size(egui::vec2(0.0, 32.0)),
     )
@@ -165,7 +165,7 @@ pub fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         egui::Button::new(egui::RichText::new(label).small().color(DANGER))
             .fill(Color32::from_rgba_unmultiplied(232, 112, 112, 28))
             .stroke(Stroke::new(
-                1.0,
+                1.0_f32,
                 Color32::from_rgba_unmultiplied(232, 112, 112, 80),
             ))
             .rounding(Rounding::same(6.0)),

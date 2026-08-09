@@ -56,7 +56,7 @@ pub fn draw_toolbar(ui: &mut Ui) -> ControlEvents {
 pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, width: f32) {
     Frame::none()
         .fill(BG_DEEP)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .rounding(10.0)
         .inner_margin(Margin::same(8.0))
         .show(ui, |ui| {
@@ -156,7 +156,7 @@ pub fn draw_controls(
 
     Frame::none()
         .fill(BG_ELEVATED)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .rounding(8.0)
         .inner_margin(Margin::symmetric(12.0, 10.0))
         .show(ui, |ui| {
@@ -195,7 +195,7 @@ pub fn draw_controls(
     if files.is_empty() {
         Frame::none()
             .fill(BG_ELEVATED)
-            .stroke(Stroke::new(1.0, BORDER))
+            .stroke(Stroke::new(1.0_f32, BORDER))
             .rounding(8.0)
             .inner_margin(Margin::same(14.0))
             .show(ui, |ui| {
@@ -225,7 +225,7 @@ pub fn draw_controls(
                     } else {
                         Color32::from_rgb(28, 30, 36)
                     })
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .rounding(8.0)
                     .inner_margin(Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {

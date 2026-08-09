@@ -186,7 +186,7 @@ impl eframe::App for TsvPlotApp {
                 0.0,
                 egui::Color32::from_rgba_unmultiplied(12, 14, 18, 180),
             );
-            painter.rect_stroke(screen.shrink(18.0), 12.0, Stroke::new(2.0, ACCENT));
+            painter.rect_stroke(screen.shrink(18.0), 12.0, Stroke::new(2.0_f32, ACCENT));
             painter.text(
                 screen.center(),
                 egui::Align2::CENTER_CENTER,
@@ -217,7 +217,7 @@ impl eframe::App for TsvPlotApp {
             .frame(
                 Frame::none()
                     .fill(theme::BG_PANEL)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(Margin::symmetric(16.0, 10.0)),
             )
             .show(ctx, |ui| {
@@ -231,7 +231,7 @@ impl eframe::App for TsvPlotApp {
             .frame(
                 Frame::none()
                     .fill(theme::BG_PANEL)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(Margin::symmetric(14.0, 4.0)),
             )
             .show(ctx, |ui| {
@@ -251,7 +251,7 @@ impl eframe::App for TsvPlotApp {
             .frame(
                 Frame::none()
                     .fill(theme::BG_PANEL)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(Margin::symmetric(14.0, 12.0)),
             )
             .show(ctx, |ui| {
