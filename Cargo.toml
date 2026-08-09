@@ -1,0 +1,24 @@
+[package]
+name = "tview"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, modern desktop viewer for plotting and comparing CSV/TSV metric logs"
+license = "MIT"
+repository = "https://github.com/mashu/tview"
+readme = "README.md"
+keywords = ["csv", "tsv", "plot", "metrics", "viewer"]
+categories = ["visualization", "command-line-utilities"]
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+egui_plot = "0.27"
+rfd = "0.14"
+csv = "1.3"
+plotters = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
