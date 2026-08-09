@@ -5,7 +5,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,10 +16,20 @@ struct AppState {
     backend: Backend,
 }
 
+#[derive(Serialize)]
+struct Meta {
+    generation: u64,
+    busy: bool,
+    status: String,
+    n_files: usize,
+    n_series: usize,
+}
+
 pub async fn serve(backend: Backend, bind: SocketAddr) -> Result<(), String> {
     let state = AppState { backend };
     let app = Router::new()
         .route("/", get(index))
+        .route("/api/meta", get(get_meta))
         .route("/api/state", get(get_state))
         .route("/api/options", post(set_options))
         .route("/api/live", post(set_live))
@@ -43,6 +53,18 @@ pub async fn serve(backend: Backend, bind: SocketAddr) -> Result<(), String> {
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("index.html"))
+}
+
+/// Cheap poll endpoint — clients only fetch full state when `generation` changes.
+async fn get_meta(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+    let (generation, busy, status, n_files, n_series) = st.backend.meta();
+    Json(Meta {
+        generation,
+        busy,
+        status,
+        n_files,
+        n_series,
+    })
 }
 
 async fn get_state(State(st): State<Arc<AppState>>) -> impl IntoResponse {

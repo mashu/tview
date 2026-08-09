@@ -204,6 +204,20 @@ impl Backend {
         self.view.read().map(|g| g.clone()).unwrap_or_default()
     }
 
+    /// Lightweight poll fields — avoids cloning series payloads.
+    pub fn meta(&self) -> (u64, bool, String, usize, usize) {
+        match self.view.read() {
+            Ok(g) => (
+                g.generation,
+                g.busy,
+                g.status.clone(),
+                g.files.len(),
+                g.series.len(),
+            ),
+            Err(_) => (0, false, String::new(), 0, 0),
+        }
+    }
+
     /// Drain pending worker events (non-blocking).
     pub fn poll_events(&self) -> Vec<Event> {
         let Ok(rx) = self.event_rx.lock() else {

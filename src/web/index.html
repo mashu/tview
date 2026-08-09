@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>tview</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
   <style>
     :root {
       --bg: #121418;
@@ -53,9 +54,16 @@
     main {
       grid-area: main;
       padding: 12px;
-      display: flex;
-      align-items: stretch;
-      justify-content: stretch;
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+    }
+    #plot {
+      width: 100%;
+      height: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
     }
     footer {
       grid-area: status;
@@ -85,7 +93,7 @@
     }
     label.row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
     input[type="range"] { width: 100%; }
-    select, input[type="text"], input[type="file"] {
+    select, input[type="text"] {
       width: 100%;
       background: var(--bg);
       color: var(--text);
@@ -93,14 +101,15 @@
       border-radius: 6px;
       padding: 6px 8px;
     }
-    button {
+    button, .btn {
       border: 0;
       border-radius: 8px;
       padding: 8px 14px;
       cursor: pointer;
       font-weight: 600;
+      font: inherit;
     }
-    button.primary { background: var(--accent); color: var(--bg); }
+    button.primary, .btn.primary { background: var(--accent); color: var(--bg); }
     button.secondary { background: var(--elevated); color: var(--text); border: 1px solid var(--border); }
     button.danger {
       background: rgba(232,112,112,0.12);
@@ -115,24 +124,29 @@
       gap: 8px;
       margin-bottom: 6px;
     }
-    .file-head .name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .file-head .rows { color: var(--dim); font-size: 12px; }
-    #plot {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
+    .file-head .name {
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+    .file-head .rows { color: var(--dim); font-size: 12px; }
     .empty {
-      margin: auto;
+      position: absolute;
+      inset: 12px;
+      display: grid;
+      place-items: center;
       text-align: center;
       color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      pointer-events: none;
     }
+    .empty[hidden] { display: none; }
     .swatch {
       width: 8px; height: 8px; border-radius: 50%;
-      display: inline-block; background: var(--dim);
+      display: inline-block; background: var(--dim); flex: 0 0 auto;
     }
     .busy { color: var(--accent); }
   </style>
@@ -140,10 +154,10 @@
 <body>
   <header>
     <div class="brand">tview</div>
-    <div class="sub">web · CSV / TSV metrics viewer</div>
+    <div class="sub">web · client-side charts</div>
     <div class="spacer"></div>
     <button class="secondary" id="btn-download">Export PNG</button>
-    <label class="primary" style="display:inline-block;padding:8px 14px;border-radius:8px;background:var(--accent);color:var(--bg);font-weight:600;cursor:pointer;">
+    <label class="btn primary">
       + Upload
       <input id="file-input" type="file" accept=".csv,.tsv,.txt,.tab,text/csv" multiple hidden />
     </label>
@@ -173,7 +187,7 @@
     <div id="files"></div>
   </aside>
   <main>
-    <img id="plot" alt="plot" hidden />
+    <div id="plot"></div>
     <div class="empty" id="empty">Upload a CSV/TSV or load a server path to plot.</div>
   </main>
   <footer>
@@ -185,23 +199,37 @@
   </footer>
   <script>
     const $ = (id) => document.getElementById(id);
+    const PALETTE = [
+      "#5ebaa7","#78aaff","#f0a060","#c88cff","#78d28c",
+      "#ff8296","#ffd264","#64d2dc","#b4c8ff","#ff966e"
+    ];
+
     let state = null;
+    let lastGeneration = -1;
+    let lastFilesKey = "";
     let debounceTimer = null;
+    let applyingControls = false;
+    let chart = echarts.init($("plot"), null, { renderer: "canvas" });
+
+    const axisStyle = {
+      axisLine: { lineStyle: { color: "#303644" } },
+      axisLabel: { color: "#949cac" },
+      splitLine: { lineStyle: { color: "#222630" } },
+      nameTextStyle: { color: "#646c7c" },
+    };
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || res.statusText);
-      }
+      if (!res.ok) throw new Error((await res.text()) || res.statusText);
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("application/json")) return res.json();
       return res;
     }
 
     function scheduleOptions() {
+      if (applyingControls) return;
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(pushOptions, 120);
+      debounceTimer = setTimeout(pushOptions, 80);
     }
 
     async function pushOptions() {
@@ -217,54 +245,67 @@
       });
     }
 
-    async function refresh() {
-      state = await api("/api/state");
-      $("status").textContent = state.status || "";
-      $("meta").textContent = `${state.files.length} files · ${state.series.length} series`;
-      $("live-tag").style.display = state.live_reload && state.files.length ? "inline" : "none";
-      $("files-title").textContent = `Files (${state.files.length})`;
+    function filesKey(files) {
+      return files.map((f) =>
+        [f.name, f.path, f.nrows, f.visible, f.columns.map((c) => `${c.name}:${c.selected|0}`).join(",")].join("|")
+      ).join(";");
+    }
 
+    function syncControls(s) {
+      applyingControls = true;
       const xsel = $("x-col");
-      const cur = state.options.x_col;
-      xsel.innerHTML = "";
-      for (const o of state.x_axis_options) {
-        const opt = document.createElement("option");
-        opt.value = o; opt.textContent = o;
-        if (o === cur) opt.selected = true;
-        xsel.appendChild(opt);
+      const cur = s.options.x_col;
+      if (xsel.dataset.opts !== s.x_axis_options.join("\0")) {
+        xsel.dataset.opts = s.x_axis_options.join("\0");
+        xsel.innerHTML = "";
+        for (const o of s.x_axis_options) {
+          const opt = document.createElement("option");
+          opt.value = o;
+          opt.textContent = o;
+          xsel.appendChild(opt);
+        }
       }
-      $("log-y").checked = state.options.log_y;
-      $("live").checked = state.live_reload;
-      $("smooth").value = state.options.smoothing;
-      $("smooth-val").textContent = Number(state.options.smoothing).toFixed(2);
-      $("lw").value = state.options.line_w;
-      $("lw-val").textContent = Number(state.options.line_w).toFixed(1);
+      xsel.value = cur;
+      $("log-y").checked = s.options.log_y;
+      $("live").checked = s.live_reload;
+      $("smooth").value = s.options.smoothing;
+      $("smooth-val").textContent = Number(s.options.smoothing).toFixed(2);
+      $("lw").value = s.options.line_w;
+      $("lw-val").textContent = Number(s.options.line_w).toFixed(1);
+      applyingControls = false;
+    }
 
-      const files = $("files");
-      files.innerHTML = "";
+    function renderFiles(s) {
+      const key = filesKey(s.files);
+      if (key === lastFilesKey) return;
+      lastFilesKey = key;
+      $("files-title").textContent = `Files (${s.files.length})`;
+      const root = $("files");
+      root.innerHTML = "";
       let colorIdx = 0;
-      const palette = [
-        "#5ebaa7","#78aaff","#f0a060","#c88cff","#78d28c",
-        "#ff8296","#ffd264","#64d2dc","#b4c8ff","#ff966e"
-      ];
-      state.files.forEach((f, fi) => {
+      s.files.forEach((f, fi) => {
         const card = document.createElement("div");
         card.className = "card";
         const head = document.createElement("div");
         head.className = "file-head";
         const vis = document.createElement("input");
-        vis.type = "checkbox"; vis.checked = f.visible;
+        vis.type = "checkbox";
+        vis.checked = f.visible;
         vis.onchange = () => api(`/api/files/${fi}/visible`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ visible: vis.checked }),
         });
         const name = document.createElement("div");
-        name.className = "name"; name.textContent = f.name; name.title = f.path;
+        name.className = "name";
+        name.textContent = f.name;
+        name.title = f.path;
         const rows = document.createElement("div");
-        rows.className = "rows"; rows.textContent = `${f.nrows} rows`;
+        rows.className = "rows";
+        rows.textContent = `${f.nrows} rows`;
         const rm = document.createElement("button");
-        rm.className = "danger"; rm.textContent = "Remove";
+        rm.className = "danger";
+        rm.textContent = "Remove";
         rm.onclick = () => api(`/api/files/${fi}`, { method: "DELETE" });
         head.append(vis, name, rows, rm);
         card.appendChild(head);
@@ -274,29 +315,118 @@
           row.className = "row";
           const sw = document.createElement("span");
           sw.className = "swatch";
-          if (c.selected && f.visible && c.name !== state.options.x_col) {
-            sw.style.background = palette[colorIdx++ % palette.length];
+          if (c.selected && f.visible && c.name !== s.options.x_col) {
+            sw.style.background = PALETTE[colorIdx++ % PALETTE.length];
           }
           const cb = document.createElement("input");
-          cb.type = "checkbox"; cb.checked = c.selected;
+          cb.type = "checkbox";
+          cb.checked = c.selected;
           cb.onchange = () => api(`/api/files/${fi}/columns/${ci}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ selected: cb.checked }),
           });
-          row.append(sw, cb, document.createTextNode(c.name));
+          row.append(sw, cb, document.createTextNode(" " + c.name));
           card.appendChild(row);
         });
-        files.appendChild(card);
+        root.appendChild(card);
       });
+    }
 
-      if (state.series.length === 0) {
-        $("plot").hidden = true;
+    function renderPlot(s) {
+      if (!s.series.length) {
         $("empty").hidden = false;
-      } else {
-        $("empty").hidden = true;
-        $("plot").hidden = false;
-        $("plot").src = `/api/plot.png?g=${state.generation}&t=${Date.now()}`;
+        chart.clear();
+        return;
+      }
+      $("empty").hidden = true;
+      const lw = Number(s.options.line_w) || 2;
+      chart.setOption({
+        animation: false,
+        backgroundColor: "transparent",
+        textStyle: { color: "#949cac" },
+        legend: {
+          type: "scroll",
+          top: 8,
+          textStyle: { color: "#949cac" },
+        },
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "cross" },
+          backgroundColor: "rgba(26,29,36,0.92)",
+          borderColor: "#303644",
+          textStyle: { color: "#e8ecf2" },
+        },
+        grid: { left: 56, right: 24, top: 48, bottom: 48, containLabel: false },
+        xAxis: {
+          type: "value",
+          name: s.options.x_col,
+          nameLocation: "middle",
+          nameGap: 28,
+          scale: true,
+          ...axisStyle,
+        },
+        yAxis: {
+          type: "value",
+          name: s.options.log_y ? "value (log10)" : "value",
+          nameLocation: "middle",
+          nameGap: 40,
+          scale: true,
+          ...axisStyle,
+        },
+        series: s.series.map((ser) => {
+          const color = `rgb(${ser.color[0]},${ser.color[1]},${ser.color[2]})`;
+          const main = {
+            name: ser.name,
+            type: "line",
+            showSymbol: false,
+            sampling: "lttb",
+            large: true,
+            largeThreshold: 800,
+            data: ser.xs.map((x, i) => [x, ser.ys[i]]),
+            lineStyle: { width: lw, color },
+            itemStyle: { color },
+            emphasis: { disabled: true },
+          };
+          if (!ser.raw_ys) return main;
+          const faint = {
+            name: ser.name + " (raw)",
+            type: "line",
+            showSymbol: false,
+            sampling: "lttb",
+            data: ser.xs.map((x, i) => [x, ser.raw_ys[i]]),
+            lineStyle: { width: Math.max(1, lw * 0.55), color, opacity: 0.28 },
+            itemStyle: { color },
+            tooltip: { show: false },
+            legendHoverLink: false,
+            silent: true,
+          };
+          return [faint, main];
+        }).flat(),
+      }, { notMerge: true });
+    }
+
+    async function pullState() {
+      const s = await api("/api/state");
+      state = s;
+      lastGeneration = s.generation;
+      $("status").textContent = s.status || (s.busy ? "working…" : "");
+      $("meta").textContent = `${s.files.length} files · ${s.series.length} series`;
+      $("live-tag").style.display = s.live_reload && s.files.length ? "inline" : "none";
+      syncControls(s);
+      renderFiles(s);
+      renderPlot(s);
+    }
+
+    async function tick() {
+      try {
+        const meta = await api("/api/meta");
+        $("status").textContent = meta.status || (meta.busy ? "working…" : $("status").textContent);
+        if (meta.generation !== lastGeneration) {
+          await pullState();
+        }
+      } catch (e) {
+        $("status").textContent = String(e.message || e);
       }
     }
 
@@ -310,11 +440,14 @@
       $("lw-val").textContent = Number($("lw").value).toFixed(1);
       scheduleOptions();
     };
-    $("live").onchange = () => api("/api/live", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ live: $("live").checked }),
-    });
+    $("live").onchange = () => {
+      if (applyingControls) return;
+      api("/api/live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ live: $("live").checked }),
+      });
+    };
 
     $("btn-path").onclick = async () => {
       const path = $("path-input").value.trim();
@@ -325,6 +458,7 @@
         body: JSON.stringify({ paths: [path] }),
       });
       $("path-input").value = "";
+      await pullState();
     };
 
     $("file-input").onchange = async (e) => {
@@ -335,17 +469,19 @@
         await api("/api/upload", { method: "POST", body: fd });
       }
       e.target.value = "";
+      await pullState();
     };
 
     $("btn-download").onclick = () => {
       const a = document.createElement("a");
-      a.href = `/api/plot.png?download=1&t=${Date.now()}`;
+      a.href = `/api/plot.png?t=${Date.now()}`;
       a.download = "plot.png";
       a.click();
     };
 
-    refresh();
-    setInterval(refresh, 500);
+    new ResizeObserver(() => chart.resize()).observe($("plot"));
+    pullState();
+    setInterval(tick, 250);
   </script>
 </body>
 </html>

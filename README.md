@@ -35,7 +35,7 @@ tview serve --bind 0.0.0.0:8080
 tview serve --bind 127.0.0.1:8080 ./metrics.csv
 ```
 
-Open `http://<host>:8080`. Upload files, load server paths, toggle series, and export PNG. Live reload polls open disk files the same way as desktop.
+Open `http://<host>:8080`. Charts render in the browser with [Apache ECharts](https://echarts.apache.org/) (canvas); the server only sends JSON series data. PNG export is on demand.
 
 ## Architecture
 
