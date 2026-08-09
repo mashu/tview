@@ -62,13 +62,16 @@ pub fn draw_toolbar(ui: &mut Ui, busy: bool) -> ControlEvents {
 }
 
 pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, width: f32) {
+    // Pan only with an explicit modifier — plain drag was too easy to knock
+    // the curve out of view and disable auto-bounds.
+    let pan = ui.input(|i| i.modifiers.shift_only());
     Frame::none()
         .fill(BG_DEEP)
         .stroke(Stroke::new(1.0_f32, BORDER))
         .rounding(10.0)
         .inner_margin(Margin::same(8.0))
         .show(ui, |ui| {
-            Plot::new("main_plot")
+            let response = Plot::new("main_plot")
                 .legend(
                     Legend::default()
                         .background_alpha(0.85)
@@ -76,9 +79,12 @@ pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, w
                 )
                 .x_axis_label(x_label)
                 .y_axis_label(y_label)
-                .allow_boxed_zoom(true)
-                .allow_drag(true)
+                .auto_bounds(egui::Vec2b::TRUE)
+                .allow_drag(pan)
+                .allow_zoom(true)
                 .allow_scroll(true)
+                .allow_boxed_zoom(true)
+                .allow_double_click_reset(true)
                 .show_axes([true, true])
                 .show_grid([true, true])
                 .height(ui.available_height())
@@ -110,7 +116,9 @@ pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, w
                                 .name(&s.name),
                         );
                     }
-                });
+                })
+                .response;
+            response.on_hover_text("Scroll: zoom · Shift+drag: pan · Double-click: fit to data");
         });
 }
 
