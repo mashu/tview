@@ -3,8 +3,9 @@ use crate::desktop::theme::{
     self, ACCENT, BG_DEEP, BG_ELEVATED, BORDER, TEXT, TEXT_DIM, TEXT_MUTED,
 };
 use crate::series::{Series, palette};
+use crate::slope::{Trend, local_slope, nearest_index};
 use egui::{Color32, ComboBox, Frame, Margin, RichText, Sense, Stroke, Ui};
-use egui_plot::{Legend, Line, Plot, PlotPoints};
+use egui_plot::{Legend, Line, LineStyle, Plot, PlotPoints, Points};
 
 pub fn color32(c: (u8, u8, u8)) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
@@ -12,6 +13,64 @@ pub fn color32(c: (u8, u8, u8)) -> Color32 {
 
 pub fn color32_a(c: (u8, u8, u8), a: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.0, c.1, c.2, a)
+}
+
+fn trend_color(trend: Trend) -> Color32 {
+    match trend {
+        Trend::Decreasing => Color32::from_rgb(143, 214, 198),
+        Trend::Plateau => Color32::from_rgb(230, 208, 138),
+        Trend::Increasing => Color32::from_rgb(168, 196, 255),
+    }
+}
+
+fn fmt_num(v: f64) -> String {
+    if !v.is_finite() {
+        return "—".into();
+    }
+    let a = v.abs();
+    if a != 0.0 && !(1e-3..1e4).contains(&a) {
+        format!("{v:.2e}")
+    } else {
+        format!("{v:.4}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SlopeSettings {
+    pub enabled: bool,
+    pub window: usize,
+    /// Plateau band as percent (e.g. 2.0 = 2%).
+    pub plateau_pct: f64,
+}
+
+impl Default for SlopeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            window: 12,
+            plateau_pct: 2.0,
+        }
+    }
+}
+
+impl SlopeSettings {
+    pub fn plateau_frac(&self) -> f64 {
+        (self.plateau_pct / 100.0).max(0.0)
+    }
+
+    pub fn window(&self) -> usize {
+        self.window.clamp(3, 60)
+    }
+}
+
+struct HoverSlopeRow {
+    name: String,
+    color: (u8, u8, u8),
+    fit: crate::slope::SlopeFit,
+    y_at: f64,
 }
 
 #[derive(Default)]
@@ -29,6 +88,7 @@ pub struct ControlEvents {
 pub struct DisplaySettings<'a> {
     pub options: &'a mut PlotOptions,
     pub live_reload: &'a mut bool,
+    pub slope: &'a mut SlopeSettings,
 }
 
 pub fn draw_toolbar(ui: &mut Ui, busy: bool) -> ControlEvents {
@@ -61,7 +121,14 @@ pub fn draw_toolbar(ui: &mut Ui, busy: bool) -> ControlEvents {
     ev
 }
 
-pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, width: f32) {
+pub fn draw_plot(
+    ui: &mut Ui,
+    series: &[Series],
+    x_label: &str,
+    y_label: &str,
+    width: f32,
+    slope: &SlopeSettings,
+) {
     // Pan only with an explicit modifier — plain drag was too easy to knock
     // the curve out of view and disable auto-bounds.
     let pan = ui.input(|i| i.modifiers.shift_only());
@@ -71,7 +138,7 @@ pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, w
         .rounding(10.0)
         .inner_margin(Margin::same(8.0))
         .show(ui, |ui| {
-            let response = Plot::new("main_plot")
+            let plot_resp = Plot::new("main_plot")
                 .legend(
                     Legend::default()
                         .background_alpha(0.85)
@@ -116,9 +183,95 @@ pub fn draw_plot(ui: &mut Ui, series: &[Series], x_label: &str, y_label: &str, w
                                 .name(&s.name),
                         );
                     }
-                })
-                .response;
-            response.on_hover_text("Scroll: zoom · Shift+drag: pan · Double-click: fit to data");
+
+                    let mut hover_rows: Vec<HoverSlopeRow> = Vec::new();
+                    if slope.enabled
+                        && let Some(pointer) = pu.pointer_coordinate()
+                    {
+                        let win = slope.window();
+                        let band = slope.plateau_frac();
+                        for s in series {
+                            let Some(idx) = nearest_index(&s.xs, pointer.x) else {
+                                continue;
+                            };
+                            let Some(fit) = local_slope(&s.xs, &s.ys, idx, win, band) else {
+                                continue;
+                            };
+                            if !fit.y0.is_finite() {
+                                continue;
+                            }
+                            let y_at = s.ys.get(idx).copied().unwrap_or(fit.y0);
+                            let x_span =
+                                s.xs.last()
+                                    .zip(s.xs.first())
+                                    .map(|(a, b)| a - b)
+                                    .unwrap_or(1.0);
+                            let [[x1, y1], [x2, y2]] = fit.tangent_endpoints(x_span);
+                            pu.line(
+                                Line::new(PlotPoints::from(vec![[x1, y1], [x2, y2]]))
+                                    .color(color32(s.color))
+                                    .width((width * 0.85).max(1.2))
+                                    .style(LineStyle::dashed_dense()),
+                            );
+                            pu.points(
+                                Points::new(PlotPoints::from(vec![[fit.x0, fit.y0]]))
+                                    .color(color32(s.color))
+                                    .radius(3.5_f32)
+                                    .filled(true),
+                            );
+                            hover_rows.push(HoverSlopeRow {
+                                name: s.name.clone(),
+                                color: s.color,
+                                fit,
+                                y_at,
+                            });
+                        }
+                    }
+                    hover_rows
+                });
+
+            let response = plot_resp.response;
+            if plot_resp.inner.is_empty() {
+                response
+                    .on_hover_text("Scroll: zoom · Shift+drag: pan · Double-click: fit to data");
+            } else {
+                response.on_hover_ui(|ui| {
+                    ui.label(
+                        RichText::new("Local slope (trailing window)")
+                            .small()
+                            .color(TEXT_MUTED),
+                    );
+                    ui.add_space(4.0);
+                    for row in &plot_resp.inner {
+                        ui.horizontal(|ui| {
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(8.0, 8.0), Sense::hover());
+                            ui.painter()
+                                .circle_filled(rect.center(), 4.0, color32(row.color));
+                            ui.label(RichText::new(&row.name).strong());
+                        });
+                        ui.label(format!("y = {}", fmt_num(row.y_at)));
+                        ui.colored_label(
+                            trend_color(row.fit.trend),
+                            format!(
+                                "{} {} · slope {} · Δ {:.1}% / {} pts",
+                                row.fit.trend.arrow(),
+                                row.fit.trend.as_str(),
+                                fmt_num(row.fit.slope),
+                                row.fit.rel * 100.0,
+                                row.fit.n
+                            ),
+                        );
+                        ui.add_space(4.0);
+                    }
+                    ui.separator();
+                    ui.label(
+                        RichText::new("Scroll: zoom · Shift+drag: pan · Double-click: fit")
+                            .small()
+                            .color(TEXT_DIM),
+                    );
+                });
+            }
         });
 }
 
@@ -163,6 +316,7 @@ pub fn draw_controls(
     let DisplaySettings {
         options,
         live_reload,
+        slope,
     } = settings;
 
     theme::section_label(ui, "Display");
@@ -222,6 +376,38 @@ pub fn draw_controls(
                 .changed()
             {
                 ev.options_changed = true;
+            }
+            ui.separator();
+            ui.checkbox(&mut slope.enabled, "Slope on hover")
+                .on_hover_text(
+                    "Fit a trailing-window OLS slope at the pointer and draw a tangent.",
+                );
+            let mut win = slope.window as f32;
+            if ui
+                .add(
+                    egui::Slider::new(&mut win, 3.0..=60.0)
+                        .integer()
+                        .text("Slope window")
+                        .suffix(" pts"),
+                )
+                .changed()
+            {
+                slope.window = win as usize;
+            }
+            let mut band = slope.plateau_pct as f32;
+            if ui
+                .add(
+                    egui::Slider::new(&mut band, 0.5..=10.0)
+                        .text("Plateau band")
+                        .suffix("%"),
+                )
+                .on_hover_text(
+                    "If |relative Δ| over the window is below this percent of |mean y|, \
+                     the trend is classified as plateau.",
+                )
+                .changed()
+            {
+                slope.plateau_pct = f64::from(band);
             }
         });
 
@@ -347,7 +533,14 @@ fn draw_column_row(
     });
 }
 
-pub fn draw_status_bar(ui: &mut Ui, status: &str, n_series: usize, n_files: usize, live: bool) {
+pub fn draw_status_bar(
+    ui: &mut Ui,
+    status: &str,
+    series: &[Series],
+    n_files: usize,
+    live: bool,
+    slope: &SlopeSettings,
+) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("{n_files} files"))
@@ -356,13 +549,51 @@ pub fn draw_status_bar(ui: &mut Ui, status: &str, n_series: usize, n_files: usiz
         );
         ui.label(RichText::new("·").small().color(TEXT_DIM));
         ui.label(
-            RichText::new(format!("{n_series} series"))
+            RichText::new(format!("{} series", series.len()))
                 .small()
                 .color(TEXT_DIM),
         );
         if live && n_files > 0 {
             ui.label(RichText::new("·").small().color(TEXT_DIM));
             ui.label(RichText::new("live").small().color(ACCENT));
+        }
+        if slope.enabled && !series.is_empty() {
+            ui.label(RichText::new("·").small().color(TEXT_DIM));
+            let win = slope.window();
+            let band = slope.plateau_frac();
+            for s in series {
+                let Some(fit) = local_slope(&s.xs, &s.ys, s.xs.len().saturating_sub(1), win, band)
+                else {
+                    continue;
+                };
+                let short = if s.name.chars().count() > 22 {
+                    let truncated: String = s.name.chars().take(20).collect();
+                    format!("{truncated}…")
+                } else {
+                    s.name.clone()
+                };
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), Sense::hover());
+                    ui.painter()
+                        .circle_filled(rect.center(), 3.0, color32(s.color));
+                    ui.label(
+                        RichText::new(format!(
+                            "{short} {} {}",
+                            fit.trend.arrow(),
+                            fit.trend.as_str()
+                        ))
+                        .small()
+                        .color(trend_color(fit.trend)),
+                    )
+                    .on_hover_text(format!(
+                        "{}: end-window slope {} · relative Δ {:.2}% over last {} pts",
+                        s.name,
+                        fmt_num(fit.slope),
+                        fit.rel * 100.0,
+                        fit.n
+                    ));
+                });
+            }
         }
         if !status.is_empty() {
             ui.separator();

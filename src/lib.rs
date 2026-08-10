@@ -9,6 +9,7 @@ pub mod data;
 pub mod desktop;
 pub mod export;
 pub mod series;
+pub mod slope;
 pub mod web;
 
 pub use backend::{Backend, Command, Event, PlotOptions, SharedView};

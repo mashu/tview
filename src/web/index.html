@@ -149,6 +149,33 @@
       display: inline-block; background: var(--dim); flex: 0 0 auto;
     }
     .busy { color: var(--accent); }
+    .trend {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .trend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--elevated);
+      font-size: 11px;
+      color: var(--muted);
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .trend-chip .dot {
+      width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+    }
+    .trend-chip.decreasing { color: #8fd6c6; border-color: rgba(94,186,167,0.45); }
+    .trend-chip.plateau { color: #e6d08a; border-color: rgba(255,210,100,0.4); }
+    .trend-chip.increasing { color: #a8c4ff; border-color: rgba(120,170,255,0.45); }
   </style>
 </head>
 <body>
@@ -176,6 +203,13 @@
       <label>Line width <span id="lw-val">2</span>
         <input type="range" id="lw" min="0.5" max="4" step="0.1" value="2" />
       </label>
+      <label class="row"><input type="checkbox" id="slope" checked /> Slope on hover</label>
+      <label>Slope window <span id="slope-win-val">12</span> pts
+        <input type="range" id="slope-win" min="3" max="60" step="1" value="12" />
+      </label>
+      <label>Plateau band <span id="plateau-val">2</span>%
+        <input type="range" id="plateau" min="0.5" max="10" step="0.5" value="2" />
+      </label>
     </div>
     <div class="section">Open by path</div>
     <div class="card">
@@ -195,6 +229,8 @@
     <span>·</span>
     <span id="live-tag" class="busy">live</span>
     <span>·</span>
+    <span id="end-trend" class="trend" title="Trend over the last slope-window points at the end of each series"></span>
+    <span>·</span>
     <span id="status"></span>
   </footer>
   <script>
@@ -210,6 +246,7 @@
     let debounceTimer = null;
     let applyingControls = false;
     let chart = echarts.init($("plot"), null, { renderer: "canvas" });
+    let hoverX = null;
 
     const axisStyle = {
       axisLine: { lineStyle: { color: "#303644" } },
@@ -217,6 +254,200 @@
       splitLine: { lineStyle: { color: "#222630" } },
       nameTextStyle: { color: "#646c7c" },
     };
+
+    function slopeWindow() {
+      return Math.max(3, Math.round(Number($("slope-win").value) || 12));
+    }
+
+    function plateauFrac() {
+      return Math.max(0.001, (Number($("plateau").value) || 2) / 100);
+    }
+
+    function slopeEnabled() {
+      return $("slope").checked;
+    }
+
+    function fmtNum(v) {
+      if (!Number.isFinite(v)) return "—";
+      const a = Math.abs(v);
+      if (a !== 0 && (a >= 1e4 || a < 1e-3)) return v.toExponential(2);
+      return String(Number(v.toPrecision(4)));
+    }
+
+    function nearestIndex(xs, x) {
+      if (!xs.length) return -1;
+      let lo = 0, hi = xs.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (xs[mid] < x) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo > 0 && Math.abs(xs[lo - 1] - x) <= Math.abs(xs[lo] - x)) return lo - 1;
+      return lo;
+    }
+
+    /** OLS fit on the trailing window ending at endIdx. */
+    function localSlope(xs, ys, endIdx, window, plateau) {
+      const end = Math.min(endIdx, xs.length - 1);
+      if (end < 0) return null;
+      const start = Math.max(0, end - window + 1);
+      let n = 0, sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
+      let xFirst = NaN, xLast = NaN;
+      for (let i = start; i <= end; i++) {
+        const x = xs[i], y = ys[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (!Number.isFinite(xFirst)) xFirst = x;
+        xLast = x;
+        n += 1;
+        sumX += x;
+        sumY += y;
+        sumXX += x * x;
+        sumXY += x * y;
+      }
+      if (n < 2) return null;
+      const denom = n * sumXX - sumX * sumX;
+      if (Math.abs(denom) < 1e-18) return null;
+      const slope = (n * sumXY - sumX * sumY) / denom;
+      const meanX = sumX / n;
+      const meanY = sumY / n;
+      const intercept = meanY - slope * meanX;
+      const xSpan = xLast - xFirst;
+      const dy = slope * xSpan;
+      const scale = Math.max(Math.abs(meanY), 1e-12);
+      const rel = dy / scale;
+      let trend = "plateau";
+      if (rel < -plateau) trend = "decreasing";
+      else if (rel > plateau) trend = "increasing";
+      const x0 = xs[end];
+      const y0 = intercept + slope * x0;
+      return { slope, intercept, meanX, meanY, start, end, n, xSpan, rel, trend, x0, y0, xFirst, xLast };
+    }
+
+    function trendText(trend) {
+      if (trend === "decreasing") return "decreasing";
+      if (trend === "increasing") return "increasing";
+      return "plateau";
+    }
+
+    function trendArrow(trend) {
+      if (trend === "decreasing") return "↓";
+      if (trend === "increasing") return "↑";
+      return "→";
+    }
+
+    function trendColor(trend) {
+      if (trend === "decreasing") return "#5ebaa7";
+      if (trend === "increasing") return "#78aaff";
+      return "#ffd264";
+    }
+
+    function clearTangents() {
+      chart.setOption({ graphic: [] }, { lazyUpdate: true });
+    }
+
+    function drawTangents(x) {
+      if (!slopeEnabled() || !state?.series?.length || !Number.isFinite(x)) {
+        clearTangents();
+        return;
+      }
+      const win = slopeWindow();
+      const plateau = plateauFrac();
+      const graphics = [];
+      for (const ser of state.series) {
+        const idx = nearestIndex(ser.xs, x);
+        const fit = localSlope(ser.xs, ser.ys, idx, win, plateau);
+        if (!fit || !Number.isFinite(fit.y0)) continue;
+        const halfSpan = Math.abs(fit.xSpan);
+        let half = halfSpan > 0 ? halfSpan * 0.6 : 0;
+        if (!(half > 0)) {
+          const full = Math.abs(ser.xs[ser.xs.length - 1] - ser.xs[0]);
+          half = Math.max(full * 0.03, Number.isFinite(full) ? full || 1 : 1);
+        }
+        const x1 = fit.x0 - half;
+        const x2 = fit.x0 + half;
+        const y1 = fit.intercept + fit.slope * x1;
+        const y2 = fit.intercept + fit.slope * x2;
+        const p1 = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [x1, y1]);
+        const p2 = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [x2, y2]);
+        const pc = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [fit.x0, fit.y0]);
+        if (!p1 || !p2 || !pc) continue;
+        const color = `rgb(${ser.color[0]},${ser.color[1]},${ser.color[2]})`;
+        graphics.push({
+          type: "line",
+          shape: { x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1] },
+          style: {
+            stroke: color,
+            lineWidth: 1.6,
+            lineDash: [5, 4],
+            opacity: 0.9,
+          },
+          silent: true,
+          z: 100,
+        });
+        graphics.push({
+          type: "circle",
+          shape: { cx: pc[0], cy: pc[1], r: 3.2 },
+          style: { fill: color, stroke: "#121418", lineWidth: 1 },
+          silent: true,
+          z: 101,
+        });
+      }
+      chart.setOption({ graphic: graphics }, { lazyUpdate: true });
+    }
+
+    function renderEndTrend(s) {
+      const root = $("end-trend");
+      root.innerHTML = "";
+      if (!slopeEnabled() || !s.series.length) return;
+      const win = slopeWindow();
+      const plateau = plateauFrac();
+      for (const ser of s.series) {
+        const fit = localSlope(ser.xs, ser.ys, ser.xs.length - 1, win, plateau);
+        if (!fit) continue;
+        const chip = document.createElement("span");
+        chip.className = `trend-chip ${fit.trend}`;
+        const short = ser.name.length > 28 ? ser.name.slice(0, 26) + "…" : ser.name;
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.background = `rgb(${ser.color[0]},${ser.color[1]},${ser.color[2]})`;
+        chip.append(
+          dot,
+          document.createTextNode(
+            `${short} ${trendArrow(fit.trend)} ${trendText(fit.trend)} (${(fit.rel * 100).toFixed(1)}%)`
+          )
+        );
+        chip.title = `${ser.name}: end-window slope ${fmtNum(fit.slope)} · relative Δ ${(fit.rel * 100).toFixed(2)}% over last ${fit.n} pts`;
+        root.appendChild(chip);
+      }
+    }
+
+    function slopeTooltipHtml(params) {
+      if (!params?.length) return "";
+      const x = params[0].axisValue;
+      const win = slopeWindow();
+      const plateau = plateauFrac();
+      let html = `<div style="margin-bottom:4px;color:#949cac">x = ${fmtNum(x)}</div>`;
+      for (const p of params) {
+        if (!p || String(p.seriesName).endsWith("(raw)")) continue;
+        const ser = state?.series?.find((s) => s.name === p.seriesName);
+        const y = Array.isArray(p.value) ? p.value[1] : p.value;
+        html += `<div style="margin:3px 0">${p.marker} <b>${p.seriesName}</b>: ${fmtNum(y)}`;
+        if (slopeEnabled() && ser) {
+          const idx = nearestIndex(ser.xs, x);
+          const fit = localSlope(ser.xs, ser.ys, idx, win, plateau);
+          if (fit) {
+            const col = trendColor(fit.trend);
+            html += `<div style="margin:2px 0 2px 18px;color:${col};font-size:12px">`
+              + `${trendArrow(fit.trend)} ${trendText(fit.trend)}`
+              + ` · slope ${fmtNum(fit.slope)}`
+              + ` · Δ ${(fit.rel * 100).toFixed(1)}% / ${fit.n} pts`
+              + `</div>`;
+          }
+        }
+        html += `</div>`;
+      }
+      return html;
+    }
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
@@ -337,6 +568,8 @@
       if (!s.series.length) {
         $("empty").hidden = false;
         chart.clear();
+        hoverX = null;
+        renderEndTrend(s);
         return;
       }
       $("empty").hidden = true;
@@ -356,6 +589,7 @@
           backgroundColor: "rgba(26,29,36,0.92)",
           borderColor: "#303644",
           textStyle: { color: "#e8ecf2" },
+          formatter: slopeTooltipHtml,
         },
         grid: { left: 56, right: 24, top: 48, bottom: 48, containLabel: false },
         xAxis: {
@@ -374,6 +608,7 @@
           scale: true,
           ...axisStyle,
         },
+        graphic: [],
         series: s.series.map((ser) => {
           const color = `rgb(${ser.color[0]},${ser.color[1]},${ser.color[2]})`;
           const main = {
@@ -404,6 +639,8 @@
           return [faint, main];
         }).flat(),
       }, { notMerge: true });
+      renderEndTrend(s);
+      if (hoverX != null) drawTangents(hoverX);
     }
 
     async function pullState() {
@@ -440,6 +677,32 @@
       $("lw-val").textContent = Number($("lw").value).toFixed(1);
       scheduleOptions();
     };
+    function refreshSlopeUi() {
+      $("slope-win-val").textContent = String(slopeWindow());
+      $("plateau-val").textContent = String(Number($("plateau").value) || 2);
+      if (state) renderEndTrend(state);
+      if (hoverX != null) drawTangents(hoverX);
+      else clearTangents();
+    }
+    $("slope").onchange = refreshSlopeUi;
+    $("slope-win").oninput = refreshSlopeUi;
+    $("plateau").oninput = refreshSlopeUi;
+
+    chart.on("updateAxisPointer", (ev) => {
+      const xInfo = (ev.axesInfo || []).find((a) => a.axisDim === "x");
+      if (!xInfo || !Number.isFinite(xInfo.value)) {
+        hoverX = null;
+        clearTangents();
+        return;
+      }
+      hoverX = xInfo.value;
+      drawTangents(hoverX);
+    });
+    chart.getZr().on("globalout", () => {
+      hoverX = null;
+      clearTangents();
+    });
+
     $("live").onchange = () => {
       if (applyingControls) return;
       api("/api/live", {
@@ -479,7 +742,11 @@
       a.click();
     };
 
-    new ResizeObserver(() => chart.resize()).observe($("plot"));
+    new ResizeObserver(() => {
+      chart.resize();
+      if (hoverX != null) drawTangents(hoverX);
+    }).observe($("plot"));
+    refreshSlopeUi();
     pullState();
     setInterval(tick, 250);
   </script>

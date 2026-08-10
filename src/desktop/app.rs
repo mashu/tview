@@ -1,6 +1,6 @@
 use crate::backend::{Backend, Command, Event, FileView, PlotOptions, SeriesDto};
 use crate::desktop::theme::{self, ACCENT, BG_DEEP, BORDER};
-use crate::desktop::ui::{self, DisplaySettings};
+use crate::desktop::ui::{self, DisplaySettings, SlopeSettings};
 use crate::series::Series;
 use eframe::egui;
 use egui::{Context, Frame, Margin, Stroke};
@@ -12,6 +12,7 @@ pub struct DesktopApp {
     /// Local mirrors for widgets; flushed to backend on change.
     options: PlotOptions,
     live_reload: bool,
+    slope: SlopeSettings,
     status: String,
     busy: bool,
     files: Vec<FileView>,
@@ -30,6 +31,7 @@ impl DesktopApp {
             backend,
             options: snap.options,
             live_reload: snap.live_reload,
+            slope: SlopeSettings::default(),
             status: snap.status,
             busy: snap.busy,
             files: snap.files,
@@ -161,9 +163,10 @@ impl eframe::App for DesktopApp {
                 ui::draw_status_bar(
                     ui,
                     &self.status,
-                    self.series.len(),
+                    &self.series,
                     self.files.len(),
                     self.live_reload,
+                    &self.slope,
                 );
             });
 
@@ -184,6 +187,7 @@ impl eframe::App for DesktopApp {
                     DisplaySettings {
                         options: &mut self.options,
                         live_reload: &mut self.live_reload,
+                        slope: &mut self.slope,
                     },
                     &self.x_opts,
                 );
@@ -229,6 +233,7 @@ impl eframe::App for DesktopApp {
                         &self.options.x_col,
                         ylab,
                         self.options.line_w,
+                        &self.slope,
                     );
                 }
             });
